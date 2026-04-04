@@ -16,7 +16,14 @@
 
 package org.springframework.ai.chat.client
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.reactive.asFlow
+import org.springframework.ai.chat.model.ChatModel
 import org.springframework.ai.chat.model.ChatResponse
+import org.springframework.ai.chat.model.StreamingChatModel
+import org.springframework.ai.chat.prompt.ChatOptions
+import org.springframework.ai.chat.prompt.Prompt
+import org.springframework.ai.chat.messages.UserMessage
 import org.springframework.core.ParameterizedTypeReference
 
 /**
@@ -29,4 +36,25 @@ inline fun <reified T : Any> ChatClient.CallResponseSpec.entity(): T =
 	entity(object : ParameterizedTypeReference<T>() {}) as T
 
 inline fun <reified T : Any> ChatClient.CallResponseSpec.responseEntity(): ResponseEntity<ChatResponse, T> =
-	responseEntity(object : ParameterizedTypeReference<T>() {}) 
+	responseEntity(object : ParameterizedTypeReference<T>() {})
+
+/**
+ * Coroutine-friendly adapter over [StreamingChatModel.stream] returning a [Flow] of [ChatResponse].
+ */
+fun StreamingChatModel.streamAsFlow(prompt: Prompt): Flow<ChatResponse> = this.stream(prompt).asFlow()
+
+/**
+ * Coroutine-friendly adapter over [ChatModel.call].
+ */
+suspend fun ChatModel.callSuspend(prompt: Prompt): ChatResponse = this.call(prompt)
+
+/**
+ * Coroutine-friendly adapter over [ChatModel.call] using a String input.
+ */
+suspend fun ChatModel.callSuspend(message: String): String? = this.call(message)
+
+/**
+ * Coroutine-friendly adapter over [ChatModel.call] using one user message.
+ */
+suspend fun ChatModel.callSuspend(message: UserMessage, chatOptions: ChatOptions? = null): ChatResponse =
+	this.call(Prompt(listOf(message), chatOptions))
