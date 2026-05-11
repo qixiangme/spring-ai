@@ -43,6 +43,7 @@ import tools.jackson.databind.node.ObjectNode;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.ai.util.json.JsonParser;
+import org.springframework.core.KotlinDetector;
 import org.springframework.core.Nullness;
 import org.springframework.util.Assert;
 import org.springframework.util.ClassUtils;
@@ -127,6 +128,9 @@ public final class JsonSchemaGenerator {
 		List<String> required = new ArrayList<>();
 
 		for (int i = 0; i < method.getParameterCount(); i++) {
+			if (isKotlinContinuationParameter(method, i)) {
+				continue;
+			}
 			String parameterName = method.getParameters()[i].getName();
 			Type parameterType = method.getGenericParameterTypes()[i];
 			if (parameterType instanceof Class<?> parameterClass
@@ -156,6 +160,11 @@ public final class JsonSchemaGenerator {
 		processSchemaOptions(schemaOptions, schema);
 
 		return schema.toPrettyString();
+	}
+
+	private static boolean isKotlinContinuationParameter(Method method, int index) {
+		return KotlinDetector.isSuspendingFunction(method)
+				&& ClassUtils.isAssignable(kotlin.coroutines.Continuation.class, method.getParameterTypes()[index]);
 	}
 
 	/**

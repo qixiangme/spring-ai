@@ -26,6 +26,7 @@ import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Mono;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
 
@@ -37,6 +38,8 @@ import org.springframework.ai.tool.execution.ToolCallResultConverter;
 import org.springframework.ai.tool.execution.ToolExecutionException;
 import org.springframework.ai.tool.metadata.ToolMetadata;
 import org.springframework.ai.util.json.JsonParser;
+import org.springframework.core.CoroutinesUtils;
+import org.springframework.core.KotlinDetector;
 import org.springframework.util.Assert;
 import org.springframework.util.ClassUtils;
 import org.springframework.util.CollectionUtils;
@@ -139,13 +142,17 @@ public final class MethodToolCallback implements ToolCallback {
 	// Based on the implementation in MethodToolCallback.
 	@SuppressWarnings("null")
 	private Object[] buildMethodArguments(Map<String, Object> toolInputArguments, @Nullable ToolContext toolContext) {
-		return Stream.of(this.toolMethod.getParameters()).map(parameter -> {
-			if (parameter.getType().isAssignableFrom(ToolContext.class)) {
-				return toolContext;
-			}
-			Object rawArgument = toolInputArguments.get(parameter.getName());
-			return buildTypedArgument(rawArgument, parameter.getParameterizedType());
-		}).toArray();
+		return Stream.of(this.toolMethod.getParameters())
+			.filter(parameter -> !KotlinDetector.isSuspendingFunction(this.toolMethod)
+					|| !ClassUtils.isAssignable(kotlin.coroutines.Continuation.class, parameter.getType()))
+			.map(parameter -> {
+				if (parameter.getType().isAssignableFrom(ToolContext.class)) {
+					return toolContext;
+				}
+				Object rawArgument = toolInputArguments.get(parameter.getName());
+				return buildTypedArgument(rawArgument, parameter.getParameterizedType());
+			})
+			.toArray();
 	}
 
 	private @Nullable Object buildTypedArgument(@Nullable Object value, Type type) {
@@ -173,6 +180,12 @@ public final class MethodToolCallback implements ToolCallback {
 	private @Nullable Object callMethod(Object[] methodArguments) {
 		if (isObjectNotPublic() || isMethodNotPublic()) {
 			this.toolMethod.setAccessible(true);
+		}
+
+		if (KotlinDetector.isSuspendingFunction(this.toolMethod)) {
+			return Mono
+				.from(CoroutinesUtils.invokeSuspendingFunction(this.toolMethod, this.toolObject, methodArguments))
+				.block();
 		}
 
 		Object result;
