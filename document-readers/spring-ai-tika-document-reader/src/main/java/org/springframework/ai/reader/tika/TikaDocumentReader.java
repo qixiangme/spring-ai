@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.AutoDetectParser;
@@ -61,14 +62,10 @@ public class TikaDocumentReader implements DocumentReader {
 	private final AutoDetectParser parser;
 
 	/**
-	 * Handler to manage content extraction.
+	 * Supplies a fresh handler for every {@link #get()} call so repeated reads do not
+	 * accumulate content from previous calls.
 	 */
-	private final ContentHandler handler;
-
-	/**
-	 * Metadata associated with the document being read.
-	 */
-	private final Metadata metadata;
+	private final Supplier<ContentHandler> handlerSupplier;
 
 	/**
 	 * Parsing context containing information about the parsing process.
@@ -112,26 +109,38 @@ public class TikaDocumentReader implements DocumentReader {
 
 	/**
 	 * Constructor initializing the reader with a resource and a text formatter. This
-	 * constructor will create a BodyContentHandler that allows for reading large PDFs
-	 * (constrained only by memory)
+	 * constructor will create a new BodyContentHandler for every {@link #get()} call,
+	 * allowing for reading large PDFs (constrained only by memory) and for the reader to
+	 * be safely reused across multiple calls.
 	 * @param resource Resource pointing to the document
 	 * @param textFormatter Formatter for the extracted text
 	 */
 	public TikaDocumentReader(Resource resource, ExtractedTextFormatter textFormatter) {
-		this(resource, new BodyContentHandler(-1), textFormatter);
+		this(resource, () -> new BodyContentHandler(-1), textFormatter);
 	}
 
 	/**
 	 * Constructor initializing the reader with a resource, content handler, and a text
 	 * formatter.
+	 * <p>
+	 * Because the handler instance is owned by the caller, it cannot be reset between
+	 * calls: invoking {@link #get()} more than once will reuse the same handler and, for
+	 * accumulating handlers such as {@link BodyContentHandler}, repeated calls will
+	 * return content from previous calls as well. Use
+	 * {@link #TikaDocumentReader(Resource, ExtractedTextFormatter)} if the reader needs
+	 * to be called more than once.
 	 * @param resource Resource pointing to the document
 	 * @param contentHandler Handler to manage content extraction
 	 * @param textFormatter Formatter for the extracted text
 	 */
 	public TikaDocumentReader(Resource resource, ContentHandler contentHandler, ExtractedTextFormatter textFormatter) {
+		this(resource, () -> contentHandler, textFormatter);
+	}
+
+	private TikaDocumentReader(Resource resource, Supplier<ContentHandler> handlerSupplier,
+			ExtractedTextFormatter textFormatter) {
 		this.parser = new AutoDetectParser();
-		this.handler = contentHandler;
-		this.metadata = new Metadata();
+		this.handlerSupplier = handlerSupplier;
 		this.context = new ParseContext();
 		this.resource = resource;
 		this.textFormatter = textFormatter;
@@ -144,8 +153,9 @@ public class TikaDocumentReader implements DocumentReader {
 	@Override
 	public List<Document> get() {
 		try (InputStream stream = this.resource.getInputStream()) {
-			this.parser.parse(stream, this.handler, this.metadata, this.context);
-			return List.of(toDocument(this.handler.toString()));
+			ContentHandler handler = this.handlerSupplier.get();
+			this.parser.parse(stream, handler, new Metadata(), this.context);
+			return List.of(toDocument(handler.toString()));
 		}
 		catch (Exception e) {
 			throw new RuntimeException(e);
